@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 #
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 jesarx
+# Este programa es software libre bajo la GNU GPL v3 o posterior.
+# Ver el archivo LICENSE para el texto completo.
+#
 # ============================================================================
 #  escanea-limpia.sh — Limpia, endereza, comprime y hace OCR a PDFs escaneados
 #  v4
