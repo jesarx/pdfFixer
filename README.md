@@ -292,4 +292,22 @@ terminar) y sigue estos pasos:
 
 ## Licencia
 
-Sin licencia declarada. Ajusta esta sección según prefieras.
+Este proyecto se distribuye bajo la **GNU General Public License v3.0**
+(GPL-3.0). Ver el archivo [`LICENSE`](LICENSE) para el texto completo.
+
+En resumen: puedes usar, estudiar, modificar y redistribuir el programa
+libremente, siempre que las versiones modificadas que distribuyas se liberen
+también bajo GPL-3.0 y conserven este aviso.
+
+```
+Copyright (C) 2026 jesarx
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+```
