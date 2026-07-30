@@ -144,9 +144,9 @@
 #
 #  ── SI EL TEXTO SE VE POCO NÍTIDO ──────────────────────────────────────────
 #  1) Comprueba a qué resolución está escaneado:  pdfimages -list tu.pdf|head
-#     Mira la columna "x-ppi". El script ya trabaja a esa resolución sola.
-#     Forzar -d POR ENCIMA del nativo NO añade nitidez, sólo interpola y
-#     engorda el archivo.
+#     Mira la columna "x-ppi". El script ya trabaja a esa resolución sola y
+#     NUNCA sube por encima. Forzar -d POR ENCIMA del nativo NO añade
+#     nitidez, sólo interpola y engorda el archivo (puede multiplicarlo).
 #  2) Realce previo (-u): 160 para escaneos borrosos, 60 si ya son nítidos.
 #  3) Sensibilidad (-s): ajusta el GROSOR del trazo. Default 0.45.
 #        grueso/embarrado → SUBE k (-s 0.50)
@@ -392,13 +392,27 @@ fi
 #   - renderizar POR DEBAJO del nativo → se pierde detalle, letras "comidas"
 #   - renderizar POR ENCIMA           → sólo interpola, engorda sin ganar nada
 
+# OJO: NUNCA se sube por encima del nativo. Antes había un mínimo de 200 ppi
+# que, en PDFs cuya resolución nativa es más baja, AMPLIABA las páginas: el
+# archivo salía varias veces más pesado que el original sin ganar un solo
+# detalle. Si el nativo es bajo y quieres más, pídelo a mano con -d.
+
 if [[ -z "$DPI" ]]; then
-    DPI=$(pdfimages -list "$INPUT" \
-          | awk 'NR>2 && $13+0>0 {print $13}' | sort -n \
-          | awk '{v[n++]=$1} END{print (n? v[int(n/2)] : 300)}')
-    (( DPI < 200 )) && DPI=200
-    (( DPI > 800 )) && DPI=800
-    echo ">> Resolución nativa detectada: ${DPI} ppi"
+    NATIVO=$(pdfimages -list "$INPUT" \
+             | awk 'NR>2 && $13+0>0 {print $13}' | sort -n \
+             | awk '{v[n++]=$1} END{print (n? v[int(n/2)] : 0)}')
+    if (( NATIVO > 0 )); then
+        DPI=$NATIVO
+        (( DPI > 800 )) && DPI=800     # techo: por encima se dispara el peso
+        echo ">> Resolución nativa detectada: ${DPI} ppi"
+        if (( DPI < 150 )); then
+            echo ">> (resolución nativa baja. Si el texto sale pobre, prueba -d 300," >&2
+            echo ">>  pero el archivo pesará bastante más.)" >&2
+        fi
+    else
+        DPI=300
+        echo ">> No se pudo detectar la resolución nativa; usando ${DPI} ppi"
+    fi
 fi
 
 # Ventana de Sauvola proporcional al DPI (≈ el alto de una línea). IMPAR.
@@ -718,4 +732,16 @@ with pikepdf.open(origen) as pdf:
     pdf.save(destino, linearize=True)
 PYEOF
 
-echo ">> Listo: $OUT ($(du -h "$OUT" | cut -f1))"
+# Comparación de peso. Si la salida creció, casi siempre es que el PDF de
+# origen ya venía bien comprimido: avisamos en vez de dejarlo pasar callando.
+BYTES_IN=$(stat -c%s "$INPUT")
+BYTES_OUT=$(stat -c%s "$OUT")
+echo ">> Listo: $OUT ($(du -h "$OUT" | cut -f1), origen $(du -h "$INPUT" | cut -f1))"
+if (( BYTES_OUT > BYTES_IN )); then
+    echo ">> AVISO: la salida pesa más que el original ($(( 100 * BYTES_OUT / BYTES_IN ))%)."
+    echo ">>   El PDF de origen ya venía bien comprimido. Cosas que ayudan:"
+    echo ">>     - instalar jbig2enc (del AUR): suele quitar ~50% del interior"
+    (( MODO_GRIS )) && echo ">>     - quitar -G: el modo gris pesa ~7x más que 1 bit"
+    echo ">>     - bajar la resolución con -d (p.ej. -d 200)"
+    echo ">>   Si el original ya te servía, quizá este PDF no necesitaba limpieza."
+fi

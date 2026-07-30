@@ -259,9 +259,45 @@ comerse texto legítimo.
 - `BORDE_TOL` — cuánto margen desde el borde cuenta como "pegado al borde" (2 % por defecto). Súbelo si las manchas están más adentro.
 - `-B` — desactiva la limpieza por completo.
 
+### Si el PDF de salida pesa MÁS que el original
+
+El peso de la salida **no depende del peso de la entrada**: lo fija la
+resolución de trabajo. Si el original ya venía bien comprimido, es posible que
+la salida acabe pesando más. Qué mirar, en orden:
+
+1. **¿Se está ampliando la página?** Es la causa más habitual y la más cara.
+   Compara las dimensiones en píxeles del original y de la salida:
+
+   ```bash
+   pdfimages -list original.pdf | head -4
+   pdfimages -list salida.pdf   | head -4
+   ```
+
+   Si las de la salida son **mayores**, se está interpolando: más píxeles, cero
+   detalle nuevo y un archivo mucho más pesado. El script ya no hace esto por
+   su cuenta (nunca renderiza por encima de la resolución nativa), pero sí
+   ocurre si fuerzas `-d` por encima del nativo. Quita el `-d` o bájalo.
+
+2. **¿Tienes `jbig2enc`?** Sin él, el interior se queda en TIFF G4 en vez de
+   JBIG2. El script lo avisa al correr. Instalarlo (`yay -S jbig2enc`) suele
+   quitar ~50 % del interior.
+
+3. **¿Estás en modo gris?** `-G` pesa ~7× más que 1 bit. Quítalo, o baja la
+   calidad con `-q`.
+
+4. **La capa de OCR ocupa.** En un libro de 14 páginas medimos ~50 KB. Con `-N`
+   te la ahorras, pero pierdes el texto buscable.
+
+Desde v5 el script **compara los tamaños al terminar** y te avisa si la salida
+creció, con estas mismas sugerencias.
+
+> Si el original ya estaba limpio, derecho y comprimido, puede que sencillamente
+> no necesitara pasar por aquí. Este script está pensado para escaneos crudos:
+> en un escaneo sin procesar la reducción típica que medimos fue del **76 %**.
+
 ### Si el texto se ve poco nítido
 
-1. Comprueba a qué resolución está escaneado: `pdfimages -list tu.pdf | head` (columna `x-ppi`). El script ya trabaja a esa resolución. Forzar `-d` **por encima** del nativo no añade nitidez, sólo interpola y engorda el archivo.
+1. Comprueba a qué resolución está escaneado: `pdfimages -list tu.pdf | head` (columna `x-ppi`). El script ya trabaja a esa resolución y **nunca sube por encima**: forzar `-d` por encima del nativo no añade nitidez, sólo interpola y engorda el archivo. Si el nativo es muy bajo (<150 ppi) el script te avisa; ahí `-d 300` sí puede ayudar al OCR, a costa de peso.
 2. Realce previo (`-u`): `160` para escaneos borrosos, `60` si ya son nítidos.
 3. Sensibilidad (`-s`): ajusta el grosor del trazo. El default es `0.45`.
    - grueso/embarrado → **sube** k (`-s 0.50`)
