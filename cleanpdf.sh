@@ -50,6 +50,10 @@
 #      -l IDIOMA   Idioma(s) del OCR. Códigos de 3 letras unidos con "+",
 #                  el primero es el principal:  spa  /  spa+fra  /  spa+lat
 #                  (default: autodetectar. Lista completa de códigos abajo)
+#      -U          UNIFORMAR Y NADA MÁS: iguala el tamaño de todas las
+#                  páginas SIN rasterizar ni recomprimir. Conserva las
+#                  imágenes tal cual y la capa de OCR que ya tuviera.
+#                  Ignora el resto de opciones. Ver "MODO UNIFORMAR".
 #      -e          EXTREMOS: portada = 1ª página, contraportada = ÚLTIMA
 #                  página, las dos ya en su sitio. Se dejan a color tal cual
 #                  y no se reordena nada. Implica -c 1 salvo que pases -c.
@@ -72,7 +76,26 @@
 #      ./cleanpdf.sh alls.pdf -D -B            # sin tocar geometría
 #      ./cleanpdf.sh alls.pdf -k               # respetar el orden original
 #      ./cleanpdf.sh alls.pdf -e               # portada 1ª y contraportada última
+#      ./cleanpdf.sh alls.pdf -U               # SÓLO igualar tamaño de página
 #      ./cleanpdf.sh alls.pdf -c 0 -N -D -B    # sólo unificar tamaño y comprimir
+#
+#  MODO UNIFORMAR (-U): PDF TERMINADO AL QUE SÓLO LE SOBRA DESORDEN DE TAMAÑOS
+#  Para un PDF que YA está bien —escaneado, limpio, comprimido y con OCR— y
+#  cuyo único defecto es que las hojas miden distinto:
+#      ./cleanpdf.sh libro.pdf -U
+#  Qué hace: reescribe el tamaño de cada página y encaja el contenido
+#  centrado. NO rasteriza, NO recomprime y NO vuelve a hacer OCR.
+#  Qué conserva: las imágenes byte a byte (JBIG2, JPEG, lo que sea), la capa
+#  de texto del OCR y la calidad. El peso se queda prácticamente igual.
+#  Tamaño destino: el MÁS FRECUENTE del documento; así la mayoría de páginas
+#  no se tocan y sólo se ajustan las que se salen (normalmente las cubiertas).
+#  Los metadatos se borran, igual que en el modo normal.
+#
+#  ¿POR QUÉ NO USAR EL MODO NORMAL PARA ESO? Porque el pipeline normal
+#  rasteriza y comprime desde cero. Si el PDF ya venía bien comprimido (sobre
+#  todo si su interior ya era JBIG2), el resultado pesa MÁS que el original y
+#  no se gana nada. Medido: un interior que ocupaba 3.8 KB/pág pasó a
+#  31 KB/pág al reprocesarlo. Con -U se queda en los 3.8 KB.
 #
 #  PDF YA ARMADO AL QUE SÓLO LE FALTA PESO Y TAMAÑO UNIFORME:
 #  Si el documento ya está ordenado y no quieres que se le toque nada más,
@@ -244,6 +267,8 @@ MOVER_CONTRA=1       # 1 = contraportada al final; 0 (-k) = orden original
 HACER_OCR=1          # 1 = añadir capa de texto; 0 (-N) = sin OCR
 EXTREMOS=0           # 1 (-e) = portada 1ª pág y contraportada ÚLTIMA pág, ya
                      # en su sitio: se dejan a color y NO se reordena nada.
+UNIFORMAR=0          # 1 (-U) = SÓLO uniformar el tamaño de página, sin tocar
+                     # las imágenes. Ver "MODO UNIFORMAR" en la cabecera.
 
 # --- Geometría de la página ---
 DESKEW=1             # 1 = enderezar renglones; 0 (-D) = no tocar
@@ -294,6 +319,7 @@ while (( $# )); do
         -k) MOVER_CONTRA=0; shift ;;
         -N) HACER_OCR=0; shift ;;
         -e) EXTREMOS=1; shift ;;
+        -U) UNIFORMAR=1; shift ;;
         -D) DESKEW=0; shift ;;
         -B) LIMPIAR_BORDES=0; shift ;;
         -G) MODO_GRIS=1; shift ;;
@@ -320,6 +346,143 @@ done
 # usuario pasó -c a mano se respeta lo que haya pedido.
 if (( EXTREMOS )) && (( ! COVER_SET )); then
     COVER_PAGES=1
+fi
+
+# ----------------------------------------------------------------------------
+# MODO UNIFORMAR (-U): sólo igualar el tamaño de página
+# ----------------------------------------------------------------------------
+# Camino aparte que NO rasteriza nada. Reescribe el MediaBox de cada página y
+# mete una matriz de transformación que encaja el contenido centrado. Los
+# streams de imagen (JBIG2, JPEG...) y la capa de texto del OCR se quedan tal
+# cual: mismo peso, misma calidad, y el texto sigue seleccionable porque se
+# transforma junto con el resto del contenido.
+#
+# Es lo que hay que usar con PDFs que YA están terminados y sólo tienen el
+# defecto de que las hojas miden distinto. Pasarlos por el pipeline normal los
+# volvería a comprimir desde cero y suele dejarlos MÁS pesados.
+
+if (( UNIFORMAR )); then
+    command -v python3 >/dev/null || { echo "Falta dependencia: python3" >&2; exit 1; }
+    python3 -c "import pikepdf" 2>/dev/null || {
+        echo "Falta el módulo Python pikepdf." >&2
+        echo "  Instala con: sudo pacman -S python-pikepdf" >&2
+        exit 1
+    }
+    echo ">> Modo uniformar (-U): sólo se iguala el tamaño de página."
+    echo ">>   No se rasteriza, no se recomprime y no se toca el OCR."
+
+    python3 - "$INPUT" "$OUT" <<'PYEOF'
+"""Iguala el tamaño de todas las páginas sin tocar el contenido.
+
+El tamaño destino es el MÁS FRECUENTE del documento (en empate, el de mayor
+área): así la mayoría de las páginas no se modifican en absoluto y sólo se
+ajustan las que se salen, que suelen ser las cubiertas.
+"""
+import sys
+from collections import Counter
+
+import pikepdf
+
+origen, destino = sys.argv[1], sys.argv[2]
+
+
+def medidas(pagina):
+    """Ancho, alto y esquina inferior izquierda de la caja que SE VE.
+
+    Se usa el CropBox, que es lo que los visores muestran cuando existe;
+    pikepdf devuelve el MediaBox si la página no tiene CropBox. Medir el
+    MediaBox a secas daría un tamaño equivocado en PDFs recortados.
+    """
+    cb = [float(v) for v in pagina.cropbox]
+    x0, y0 = min(cb[0], cb[2]), min(cb[1], cb[3])
+    return abs(cb[2] - cb[0]), abs(cb[3] - cb[1]), x0, y0
+
+
+def giro(pagina):
+    try:
+        return int(pagina.rotation) % 360
+    except Exception:
+        return 0
+
+
+with pikepdf.open(origen) as pdf:
+    # 1) Tamaño destino: el más frecuente TAL COMO SE VE (ya rotado).
+    #    Se agrupa por valor redondeado, pero se conserva la medida EXACTA de
+    #    la primera página de cada grupo: si se usara la redondeada, las
+    #    páginas que no se tocan quedarían con un tamaño ligeramente distinto
+    #    del que se le pone a las ajustadas y no habría uniformidad real.
+    vistos = Counter()
+    exactos = {}
+    for pagina in pdf.pages:
+        an, al, _, _ = medidas(pagina)
+        if giro(pagina) in (90, 270):
+            an, al = al, an
+        clave = (round(an, 2), round(al, 2))
+        vistos[clave] += 1
+        exactos.setdefault(clave, (an, al))
+    clave_destino = max(vistos.items(),
+                        key=lambda kv: (kv[1], kv[0][0] * kv[0][1]))[0]
+    TW, TH = exactos[clave_destino]
+
+    print(f">> Tamaños encontrados: {len(vistos)}")
+    for (an, al), n in vistos.most_common():
+        marca = "  <- destino" if (an, al) == clave_destino else ""
+        print(f">>   {an} x {al} pts  ({n} pág){marca}")
+
+    # 2) Encajar cada página que no coincida.
+    ajustadas = 0
+    for pagina in pdf.pages:
+        an, al, x0, y0 = medidas(pagina)
+        # El MediaBox va en espacio SIN rotar: si la página está girada 90/270,
+        # hay que intercambiar el destino para que se VEA del tamaño correcto.
+        nw, nh = (TH, TW) if giro(pagina) in (90, 270) else (TW, TH)
+
+        ya_encaja = (abs(an - nw) < 0.01 and abs(al - nh) < 0.01
+                     and abs(x0) < 0.01 and abs(y0) < 0.01)
+
+        if not ya_encaja:
+            escala = min(nw / an, nh / al)
+            tx = (nw - an * escala) / 2 - x0 * escala
+            ty = (nh - al * escala) / 2 - y0 * escala
+            pagina.contents_add(
+                f"q {escala:.6f} 0 0 {escala:.6f} {tx:.4f} {ty:.4f} cm\n".encode(),
+                prepend=True)
+            pagina.contents_add(b"\nQ")
+            ajustadas += 1
+
+        # El MediaBox se reescribe SIEMPRE con el mismo valor, también en las
+        # páginas que ya encajaban: si no, unas quedarían con la medida
+        # original y otras con la reescrita, y por diferencias de precisión no
+        # serían exactamente iguales. El contenido de esas páginas no se toca.
+        pagina.mediabox = [0, 0, nw, nh]
+        pagina.cropbox = [0, 0, nw, nh]
+        # Estas describirían el tamaño viejo.
+        for caja in ("/TrimBox", "/BleedBox", "/ArtBox"):
+            if caja in pagina.obj:
+                del pagina.obj[caja]
+
+    print(f">> Páginas ajustadas: {ajustadas} de {len(pdf.pages)}")
+
+    # 3) Metadatos fuera, igual que en el modo normal.
+    if pikepdf.Name.Info in pdf.trailer:
+        del pdf.trailer[pikepdf.Name.Info]
+    if pikepdf.Name.Metadata in pdf.Root:
+        del pdf.Root[pikepdf.Name.Metadata]
+    for pagina in pdf.pages:
+        for clave in (pikepdf.Name.Metadata, pikepdf.Name.PieceInfo):
+            if clave in pagina.obj:
+                del pagina.obj[clave]
+
+    pdf.save(destino, linearize=True)
+PYEOF
+
+    BYTES_IN=$(stat -c%s "$INPUT")
+    BYTES_OUT=$(stat -c%s "$OUT")
+    echo ">> Listo: $OUT ($(du -h "$OUT" | cut -f1), origen $(du -h "$INPUT" | cut -f1))"
+    if (( BYTES_OUT > BYTES_IN )); then
+        echo ">> (creció un $(( 100 * BYTES_OUT / BYTES_IN - 100 ))%: coste de linearizar; las imágenes no se tocaron)"
+    fi
+    exit 0
 fi
 
 # ----------------------------------------------------------------------------

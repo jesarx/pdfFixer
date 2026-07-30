@@ -166,6 +166,50 @@ Las opciones pueden ir **antes o después** del nombre del archivo.
 
 ## Recetas
 
+### PDF terminado al que sólo le falta que las hojas midan igual → `-U`
+
+```bash
+./cleanpdf.sh libro.pdf -U
+```
+
+Para un PDF que **ya está bien** (escaneado, limpio, comprimido y con OCR) y
+cuyo único defecto es que las páginas tienen tamaños distintos. Es un camino
+completamente aparte del resto del script:
+
+| | |
+|---|---|
+| **Qué hace** | Reescribe el tamaño de cada página y encaja el contenido centrado |
+| **Qué NO hace** | No rasteriza, no recomprime, no vuelve a hacer OCR |
+| **Qué conserva** | Las imágenes **byte a byte**, la capa de texto del OCR, la calidad |
+| **Peso** | Prácticamente idéntico al original |
+| **Metadatos** | Se borran, igual que en el modo normal |
+
+El **tamaño destino es el más frecuente** del documento, así que la mayoría de
+páginas no se tocan y sólo se ajustan las que se salen (normalmente las
+cubiertas). El script te enseña qué tamaños encontró y cuál eligió:
+
+```
+>> Tamaños encontrados: 2
+>>   328.45 x 551.44 pts  (12 pág)  <- destino
+>>   359.58 x 553.76 pts  (2 pág)
+>> Páginas ajustadas: 2 de 14
+```
+
+**No hace falta rehacer el OCR.** La capa de texto vive dentro del contenido de
+la página, así que se transforma junto con la imagen y sigue estando alineada y
+seleccionable. Lo verificamos: mismo número de palabras antes y después, texto
+idéntico, y las coordenadas del texto escaladas exactamente por el factor
+esperado.
+
+`-U` ignora las demás opciones de procesado (`-s`, `-D`, `-G`…), porque en este
+modo no hay nada que procesar. Maneja correctamente páginas rotadas
+(`/Rotate`) y PDFs recortados (`CropBox`).
+
+> **¿Por qué no usar el modo normal para esto?** Porque rasteriza y comprime
+> desde cero. Si el PDF ya venía bien comprimido —sobre todo si su interior ya
+> era JBIG2— el resultado pesa **más** que el original. Medido: un interior de
+> 3.8 KB/pág pasó a 31 KB/pág al reprocesarlo. Con `-U` se queda en 3.8 KB.
+
 ### PDF ya armado: sólo unificar tamaño de página y bajar peso
 
 Si el documento **ya está ordenado y procesado** y lo único que necesitas es que
@@ -217,6 +261,7 @@ cual venía en el escaneo:
 | `-c N` | Páginas a color al inicio (pág 1 = portada, 2..N = contraportada). `-c 0` procesa todo como interior | `2` |
 | `-d DPI` | Resolución de trabajo | `auto` (nativa) |
 | `-l IDIOMA` | Idioma(s) del OCR. Códigos de 3 letras unidos con `+`, el primero es el principal (p. ej. `spa`, `spa+fra`, `spa+lat`) | `auto` (detectar) |
+| `-U` | **Uniformar y nada más:** iguala el tamaño de las páginas sin rasterizar ni recomprimir. Conserva imágenes y OCR. Ignora el resto de opciones | desactivado |
 | `-e` | **Extremos:** portada = 1ª página y contraportada = **última**, ya en su sitio. Las deja a color y no reordena nada. Implica `-c 1` | desactivado |
 | `-k` | Conservar orden original (**no** mover la contraportada al final) | mover al final |
 | `-N` | **No hacer OCR.** Sólo limpia, unifica el tamaño y comprime | OCR activado |
@@ -307,6 +352,10 @@ la salida acabe pesando más. Qué mirar, en orden:
    Para estos PDFs el script no tiene nada que aportar salvo que necesites
    OCR o uniformar el tamaño de página. (`--jbig2-lossy` de ocrmypdf **no**
    ayuda aquí: lo medimos y no cambió nada.)
+
+   👉 **Si sólo necesitabas que las hojas midieran igual, usa
+   [`-U`](#pdf-terminado-al-que-sólo-le-falta-que-las-hojas-midan-igual---u):**
+   iguala el tamaño sin tocar las imágenes, así que el peso no sube.
 
 4. **¿Estás en modo gris?** `-G` pesa ~7× más que 1 bit. Quítalo, o baja la
    calidad con `-q`.
