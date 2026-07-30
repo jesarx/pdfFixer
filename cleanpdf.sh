@@ -50,6 +50,9 @@
 #      -l IDIOMA   Idioma(s) del OCR. Códigos de 3 letras unidos con "+",
 #                  el primero es el principal:  spa  /  spa+fra  /  spa+lat
 #                  (default: autodetectar. Lista completa de códigos abajo)
+#      -p          Guardar además la PORTADA como imagen suelta, en
+#                  <entrada>_portada.jpg, junto al PDF de entrada. Se saca
+#                  de la página 1 del original. Se combina con cualquier modo.
 #      -U          UNIFORMAR Y NADA MÁS: iguala el tamaño de todas las
 #                  páginas SIN rasterizar ni recomprimir. Conserva las
 #                  imágenes tal cual y la capa de OCR que ya tuviera.
@@ -77,6 +80,8 @@
 #      ./cleanpdf.sh alls.pdf -k               # respetar el orden original
 #      ./cleanpdf.sh alls.pdf -e               # portada 1ª y contraportada última
 #      ./cleanpdf.sh alls.pdf -U               # SÓLO igualar tamaño de página
+#      ./cleanpdf.sh alls.pdf -U -p            # igualar tamaño + portada.jpg
+#      ./cleanpdf.sh alls.pdf -p               # procesar todo + portada.jpg
 #      ./cleanpdf.sh alls.pdf -c 0 -N -D -B    # sólo unificar tamaño y comprimir
 #
 #  MODO UNIFORMAR (-U): PDF TERMINADO AL QUE SÓLO LE SOBRA DESORDEN DE TAMAÑOS
@@ -270,6 +275,7 @@ EXTREMOS=0           # 1 (-e) = portada 1ª pág y contraportada ÚLTIMA pág, y
                      # en su sitio: se dejan a color y NO se reordena nada.
 UNIFORMAR=0          # 1 (-U) = SÓLO uniformar el tamaño de página, sin tocar
                      # las imágenes. Ver "MODO UNIFORMAR" en la cabecera.
+SACAR_PORTADA=0      # 1 (-p) = guardar además la portada como entrada_portada.jpg
 
 # --- Geometría de la página ---
 DESKEW=1             # 1 = enderezar renglones; 0 (-D) = no tocar
@@ -295,6 +301,8 @@ GRIS_HI=88           # Si el fondo queda sucio, sube GRIS_LO.
 # --- Portadas a color ---
 COVER_MAX_H=1800     # Alto máximo en px (sólo reduce, nunca agranda)
 COVER_QUALITY=70     # Calidad JPEG de las portadas (1-100)
+PORTADA_QUALITY=92   # Calidad del .jpg suelto de -p. Más alta que la de las
+                     # portadas incrustadas porque ese archivo se mira aparte.
 
 # ----------------------------------------------------------------------------
 # LECTURA DE ARGUMENTOS
@@ -321,6 +329,7 @@ while (( $# )); do
         -N) HACER_OCR=0; shift ;;
         -e) EXTREMOS=1; shift ;;
         -U) UNIFORMAR=1; shift ;;
+        -p) SACAR_PORTADA=1; shift ;;
         -D) DESKEW=0; shift ;;
         -B) LIMPIAR_BORDES=0; shift ;;
         -G) MODO_GRIS=1; shift ;;
@@ -391,6 +400,41 @@ with pikepdf.open(origen) as pdf:
 PYEOF
 }
 
+# extrae_portada — guarda la página 1 como <entrada>_portada.jpg, al lado del
+# PDF de entrada. Se saca del ORIGINAL, no del resultado, así que sale igual
+# en todos los modos y no la afecta el procesado del interior.
+#
+# La resolución es la nativa de la página, pero sin pasar del alto máximo
+# (COVER_MAX_H): se calcula el dpi que da ese alto y se toma el menor de los
+# dos. Así nunca se interpola hacia arriba ni sale un archivo desmedido.
+# Todo con pdftoppm, sin necesidad de ImageMagick.
+extrae_portada() {
+    local destino="${INPUT%.pdf}_portada.jpg"
+    local alto_pts dpi_tope dpi_nativo dpi
+
+    alto_pts=$(pdfinfo -f 1 -l 1 "$INPUT" | awk '/^Page.*size:/{print $6; exit}')
+    dpi_tope=$(awk -v h="$COVER_MAX_H" -v p="$alto_pts" \
+               'BEGIN{ printf "%d", (p > 0 ? h * 72 / p : 150) }')
+    (( dpi_tope < 1 )) && dpi_tope=1
+
+    dpi_nativo=$(pdfimages -list -f 1 -l 1 "$INPUT" 2>/dev/null \
+                 | awk 'NR>2 && $13+0>0 {print $13; exit}')
+    dpi=$dpi_tope
+    if [[ -n "$dpi_nativo" ]] && (( dpi_nativo > 0 )) && (( dpi_nativo < dpi_tope )); then
+        dpi=$dpi_nativo     # la portada es de menor resolución: no la inflamos
+    fi
+
+    # -singlefile deja el nombre exacto, sin sufijo de número de página.
+    pdftoppm -jpeg -jpegopt "quality=$PORTADA_QUALITY" -r "$dpi" \
+             -f 1 -l 1 -singlefile "$INPUT" "${destino%.jpg}"
+
+    if [[ -f "$destino" ]]; then
+        echo ">> Portada: $destino ($(du -h "$destino" | cut -f1), ${dpi} ppi)"
+    else
+        echo ">> AVISO: no se pudo extraer la portada." >&2
+    fi
+}
+
 # informe_final — compara el peso de entrada y salida y avisa si creció.
 informe_final() {
     local bytes_in bytes_out
@@ -430,6 +474,12 @@ if (( UNIFORMAR )); then
         echo "  Instala con: sudo pacman -S python-pikepdf" >&2
         exit 1
     }
+    # -U por sí solo no necesita poppler, pero -p sí (para sacar la portada).
+    if (( SACAR_PORTADA )); then
+        for dep in pdftoppm pdfinfo pdfimages; do
+            command -v "$dep" >/dev/null || { echo "Falta dependencia: $dep (la pide -p)" >&2; exit 1; }
+        done
+    fi
     echo ">> Modo uniformar (-U): sólo se iguala el tamaño de página."
     echo ">>   No se rasteriza, no se recomprime y no se toca el OCR."
 
@@ -525,6 +575,7 @@ PYEOF
 
     echo ">> Borrando metadatos..."
     borra_metadatos "$WORK/uniforme.pdf" "$OUT"
+    (( SACAR_PORTADA )) && extrae_portada
     informe_final
     exit 0
 fi
@@ -917,4 +968,5 @@ ocrmypdf "${OCR_ARGS[@]}" "$WORK/ensamblado.pdf" "$WORK/final.pdf"
 echo ">> Borrando metadatos..."
 borra_metadatos "$WORK/final.pdf" "$OUT"
 
+(( SACAR_PORTADA )) && extrae_portada
 informe_final

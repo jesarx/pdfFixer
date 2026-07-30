@@ -156,6 +156,7 @@ Las opciones pueden ir **antes o después** del nombre del archivo.
 ./cleanpdf.sh alls.pdf -k                 # respetar el orden original
 ./cleanpdf.sh alls.pdf -N                 # sin OCR
 ./cleanpdf.sh alls.pdf -e                 # portada 1ª y contraportada última
+./cleanpdf.sh alls.pdf -U -p              # sólo igualar tamaño + portada.jpg
 ```
 
 > ⚠️ **El archivo de salida SIEMPRE va precedido de `-o`.**
@@ -215,6 +216,35 @@ modo no hay nada que procesar. Maneja correctamente páginas rotadas
 > era JBIG2— el resultado pesa **más** que el original. Medido: un interior de
 > 3.8 KB/pág pasó a 31 KB/pág al reprocesarlo. Con `-U` se queda en 3.8 KB.
 
+### Extraer la portada como imagen → `-p`
+
+```bash
+./cleanpdf.sh libro.pdf -p
+```
+
+Guarda la primera página como **`libro_portada.jpg`**, en la misma carpeta que
+el PDF de entrada. Se saca del original, así que sale igual en todos los modos
+y no le afecta el procesado del interior.
+
+La resolución es la **nativa de la portada**, sin pasar del alto máximo
+(`COVER_MAX_H`, 1800 px por defecto): nunca se interpola hacia arriba ni sale
+un archivo desmedido. La calidad JPEG es `PORTADA_QUALITY` (92 por defecto,
+más alta que la de las portadas incrustadas porque este archivo se mira
+aparte).
+
+`-p` es un **modificador**, no un modo: se combina con cualquier otra opción.
+
+### Sólo igualar el tamaño de página y sacar la portada
+
+Es la combinación más habitual para un PDF ya terminado:
+
+```bash
+./cleanpdf.sh libro.pdf -U -p
+```
+
+Deja `libro_limpio.pdf` con todas las páginas al tamaño de la portada (sin
+recomprimir nada y conservando el OCR) y `libro_portada.jpg` con la cubierta.
+
 ### PDF ya armado: sólo unificar tamaño de página y bajar peso
 
 Si el documento **ya está ordenado y procesado** y lo único que necesitas es que
@@ -266,6 +296,7 @@ cual venía en el escaneo:
 | `-c N` | Páginas a color al inicio (pág 1 = portada, 2..N = contraportada). `-c 0` procesa todo como interior | `2` |
 | `-d DPI` | Resolución de trabajo | `auto` (nativa) |
 | `-l IDIOMA` | Idioma(s) del OCR. Códigos de 3 letras unidos con `+`, el primero es el principal (p. ej. `spa`, `spa+fra`, `spa+lat`) | `auto` (detectar) |
+| `-p` | Guarda además la **portada** como `<entrada>_portada.jpg`, junto al PDF de entrada. Se combina con cualquier modo | desactivado |
 | `-U` | **Uniformar y nada más:** iguala el tamaño de las páginas sin rasterizar ni recomprimir. Conserva imágenes y OCR. Ignora el resto de opciones | desactivado |
 | `-e` | **Extremos:** portada = 1ª página y contraportada = **última**, ya en su sitio. Las deja a color y no reordena nada. Implica `-c 1` | desactivado |
 | `-k` | Conservar orden original (**no** mover la contraportada al final) | mover al final |
@@ -502,6 +533,7 @@ valores por defecto sin tener que pasar opciones cada vez:
 | `SAUVOLA_W`, `SAUVOLA_K`, `UNSHARP` | Binarización del interior |
 | `MODO_GRIS`, `GRIS_QUALITY`, `GRIS_LO`, `GRIS_HI` | Modo gris |
 | `COVER_MAX_H`, `COVER_QUALITY` | Portadas a color (alto máx. y calidad JPEG) |
+| `PORTADA_QUALITY` | Calidad del `.jpg` suelto que genera `-p` |
 
 ---
 
