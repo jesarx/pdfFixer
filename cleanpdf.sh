@@ -6,8 +6,8 @@
 # Ver el archivo LICENSE para el texto completo.
 #
 # ============================================================================
-#  escanea-limpia.sh — Limpia, endereza, comprime y hace OCR a PDFs escaneados
-#  v4
+#  cleanpdf.sh — Limpia, endereza, comprime y hace OCR a PDFs escaneados
+#  v5
 # ============================================================================
 #
 #  Qué hace, en orden, con cada página del interior:
@@ -21,21 +21,24 @@
 #  Y con el documento completo:
 #    6. Portada y contraportada a color, con la contraportada al final.
 #    7. OCR con tesseract, detectando el idioma automáticamente.
+#    8. UNIFICA EL TAMAÑO de todas las páginas y BORRA TODOS LOS METADATOS.
 #
 #  USO:
-#    escanea-limpia.sh entrada.pdf [opciones]
+#    cleanpdf.sh entrada.pdf [opciones]
 #    (las opciones pueden ir antes o después del archivo)
 #
 #      -o ARCHIVO  Salida                     (default: entrada_limpio.pdf)
 #      -c N        Páginas a color al inicio  (default: 2)
 #                  Se asume: pág 1 = portada, págs 2..N = contraportada(s)
+#                  Con -c 0 se procesa TODO como interior.
 #      -d DPI      Resolución de trabajo      (default: auto = nativa)
 #      -l IDIOMA   Idioma(s) del OCR. Códigos de 3 letras unidos con "+",
 #                  el primero es el principal:  spa  /  spa+fra  /  spa+lat
 #                  (default: autodetectar. Lista completa de códigos abajo)
 #      -k          Conservar orden original (NO mover contraportada al final)
+#      -N          NO hacer OCR (sólo limpiar, unificar tamaño y comprimir)
 #      -w N        Ventana Sauvola en px      (default: auto = DPI/6, impar)
-#      -s K        Sensibilidad Sauvola       (default: 0.34)
+#      -s K        Sensibilidad Sauvola       (default: 0.45)
 #      -u N        Fuerza del realce previo   (default: 120; 0 = desactivado)
 #      -a GRADOS   Inclinación máx. a corregir (default: 4)
 #      -D          Desactivar el enderezado
@@ -44,17 +47,34 @@
 #      -q N        Calidad JPEG del modo gris (default: 45)
 #
 #  EJEMPLOS:
-#      ./escanea-limpia.sh alls.pdf
-#      ./escanea-limpia.sh alls.pdf -o 45.pdf -s 0.45
-#      ./escanea-limpia.sh alls.pdf -G -d 250        # máxima nitidez
-#      ./escanea-limpia.sh alls.pdf -l spa+fra       # español con citas en francés
-#      ./escanea-limpia.sh alls.pdf -D -B            # sin tocar geometría
+#      ./cleanpdf.sh alls.pdf
+#      ./cleanpdf.sh alls.pdf -o 45.pdf -s 0.45
+#      ./cleanpdf.sh alls.pdf -G -d 250        # máxima nitidez
+#      ./cleanpdf.sh alls.pdf -l spa+fra       # español con citas en francés
+#      ./cleanpdf.sh alls.pdf -D -B            # sin tocar geometría
+#      ./cleanpdf.sh alls.pdf -k               # respetar el orden original
+#      ./cleanpdf.sh alls.pdf -c 0 -N -D -B    # sólo unificar tamaño y comprimir
+#
+#  PDF YA ARMADO AL QUE SÓLO LE FALTA PESO Y TAMAÑO UNIFORME:
+#  Si el documento ya está ordenado y no quieres que se le toque nada más,
+#  desactiva todo lo demás:
+#      ./cleanpdf.sh doc.pdf -c 0 -N -D -B
+#        -c 0  no separa portadas: trata todas las páginas igual
+#        -N    no hace OCR
+#        -D    no endereza
+#        -B    no limpia bordes
+#  Lo que SÍ sigue haciendo: unifica el tamaño de todas las páginas,
+#  comprime y deja el PDF sin metadatos.
+#
+#  METADATOS: la salida SIEMPRE queda sin metadatos (sin título, autor,
+#  productor, fechas ni XMP). No hace falta ninguna opción y no se puede
+#  desactivar.
 #
 #  ¡OJO CON LA SALIDA! El nombre del archivo de salida SIEMPRE va precedido
 #  de -o. Esto está MAL y genera "alls_limpio.pdf" ignorando el resto:
-#      ./escanea-limpia.sh alls.pdf 45.pdf -s 0.45      # ✗
+#      ./cleanpdf.sh alls.pdf 45.pdf -s 0.45      # ✗
 #  Lo correcto es:
-#      ./escanea-limpia.sh alls.pdf -o 45.pdf -s 0.45   # ✓
+#      ./cleanpdf.sh alls.pdf -o 45.pdf -s 0.45   # ✓
 #  (desde la v4 el script avisa con un error en vez de ignorarlo en silencio)
 #
 #  DEPENDENCIAS (Arch):
@@ -202,6 +222,7 @@ CANDIDATOS=(spa eng) # Idiomas SUELTOS que se prueban en la autodetección.
                      # Los que no tengas instalados se saltan sin error.
                      # Ver "IDIOMAS PARA EL OCR" en la cabecera.
 MOVER_CONTRA=1       # 1 = contraportada al final; 0 (-k) = orden original
+HACER_OCR=1          # 1 = añadir capa de texto; 0 (-N) = sin OCR
 
 # --- Geometría de la página ---
 DESKEW=1             # 1 = enderezar renglones; 0 (-D) = no tocar
@@ -214,7 +235,7 @@ BORDE_TOL=0.02       # Margen (2%) dentro del cual una mancha cuenta como
 
 # --- Binarización del interior ---
 SAUVOLA_W=""         # Vacío = auto (DPI/6, redondeado a impar)
-SAUVOLA_K=0.34       # ↑k = trazo fino, ↓k = trazo grueso
+SAUVOLA_K=0.45       # ↑k = trazo fino, ↓k = trazo grueso
 UNSHARP=120          # Realce de bordes previo (0 = desactivado)
 
 # --- Modo gris (-G) ---
@@ -249,6 +270,7 @@ while (( $# )); do
         -a) DESKEW_MAX="$2"; shift 2 ;;
         -q) GRIS_QUALITY="$2"; shift 2 ;;
         -k) MOVER_CONTRA=0; shift ;;
+        -N) HACER_OCR=0; shift ;;
         -D) DESKEW=0; shift ;;
         -B) LIMPIAR_BORDES=0; shift ;;
         -G) MODO_GRIS=1; shift ;;
@@ -284,11 +306,18 @@ python3 -c "import skimage, scipy, PIL, numpy" 2>/dev/null || {
     echo "Faltan módulos Python: python-scikit-image python-scipy python-pillow python-numpy" >&2
     exit 1
 }
+# pikepdf se usa para borrar los metadatos del PDF final. Viene instalado con
+# ocrmypdf (es dependencia suya), así que normalmente ya está.
+python3 -c "import pikepdf" 2>/dev/null || {
+    echo "Falta el módulo Python pikepdf (se usa para borrar los metadatos)." >&2
+    echo "  Instala con: sudo pacman -S python-pikepdf" >&2
+    exit 1
+}
 JOBS=$(nproc)
 
 # Si se pidieron idiomas con -l, comprobarlos AHORA y no después de haber
 # procesado todo el libro (ocrmypdf falla al final y se pierde el trabajo).
-if [[ -n "$LANGS" ]]; then
+if (( HACER_OCR )) && [[ -n "$LANGS" ]]; then
     INSTALADOS=$(tesseract --list-langs 2>/dev/null | tail -n +2)
     FALTAN=""
     for l in ${LANGS//+/ }; do
@@ -333,7 +362,7 @@ if [[ -z "$SAUVOLA_W" ]]; then
 fi
 
 MODO=$( (( MODO_GRIS )) && echo "GRIS q=$GRIS_QUALITY" || echo "1bit w=$SAUVOLA_W k=$SAUVOLA_K u=$UNSHARP" )
-echo ">> $TOTAL págs | color: 1-$COVER_PAGES | ${DPI} dpi | $MODO | deskew=$DESKEW bordes=$LIMPIAR_BORDES | $JOBS hilos"
+echo ">> $TOTAL págs | color: 1-$COVER_PAGES | ${DPI} dpi | $MODO | deskew=$DESKEW bordes=$LIMPIAR_BORDES ocr=$HACER_OCR | $JOBS hilos"
 
 # ----------------------------------------------------------------------------
 # TAMAÑO DE PÁGINA DESTINO
@@ -502,19 +531,23 @@ find "$WORK" -name 'pag-*.p*m' -print0 | xargs -0 -P "$JOBS" -I{} bash -c '
 # medio del libro (donde seguro hay texto corrido), se le hace OCR de prueba
 # con cada candidato y gana el de mayor confianza media. Cuesta ~2 s.
 
-if [[ -z "$LANGS" ]]; then
-    MUESTRA=$(find "$WORK" -name "pag-*.$EXT" | sort | awk '{l[NR]=$0} END{print l[int(NR/2)+1]}')
-    best="" ; best_conf=0
-    for l in "${CANDIDATOS[@]}"; do
-        tesseract --list-langs 2>/dev/null | grep -qx "$l" || continue
-        conf=$(tesseract "$MUESTRA" - -l "$l" tsv 2>/dev/null \
-               | awk -F'\t' '$12!="" && $11>=0 {s+=$11; n++} END{printf "%d", (n? s/n : 0)}')
-        echo "   idioma $l: confianza media $conf"
-        (( conf > best_conf )) && { best_conf=$conf; best="$l"; }
-    done
-    LANGS="${best:-spa}"
+if (( HACER_OCR )); then
+    if [[ -z "$LANGS" ]]; then
+        MUESTRA=$(find "$WORK" -name "pag-*.$EXT" | sort | awk '{l[NR]=$0} END{print l[int(NR/2)+1]}')
+        best="" ; best_conf=0
+        for l in "${CANDIDATOS[@]}"; do
+            tesseract --list-langs 2>/dev/null | grep -qx "$l" || continue
+            conf=$(tesseract "$MUESTRA" - -l "$l" tsv 2>/dev/null \
+                   | awk -F'\t' '$12!="" && $11>=0 {s+=$11; n++} END{printf "%d", (n? s/n : 0)}')
+            echo "   idioma $l: confianza media $conf"
+            (( conf > best_conf )) && { best_conf=$conf; best="$l"; }
+        done
+        LANGS="${best:-spa}"
+    fi
+    echo ">> OCR con idioma: $LANGS"
+else
+    echo ">> OCR desactivado (-N)"
 fi
-echo ">> OCR con idioma: $LANGS"
 
 # ----------------------------------------------------------------------------
 # PASO 4: ENSAMBLADO CON REORDENAMIENTO DE LA CONTRAPORTADA
@@ -534,7 +567,9 @@ else
     ORDEN=( "${COVS[@]}" "${PAGS[@]}" )
 fi
 
-img2pdf --pagesize "${PW}ptx${PH}pt" --fit into \
+# --nodate: no incrustar fechas de creación/modificación (parte de dejar el
+# PDF sin metadatos; el resto se limpia al final con pikepdf).
+img2pdf --pagesize "${PW}ptx${PH}pt" --fit into --nodate \
         "${ORDEN[@]}" -o "$WORK/ensamblado.pdf"
 
 # ----------------------------------------------------------------------------
@@ -543,13 +578,72 @@ img2pdf --pagesize "${PW}ptx${PH}pt" --fit into \
 # ocrmypdf añade la capa de texto invisible (seleccionable y buscable) y con
 # --optimize 3 recomprime: los TIFF G4 pasan a JBIG2 (si jbig2enc está
 # instalado). Sin jbig2enc bajamos a nivel 1 para no perder tiempo.
+#
+# Con -N (sin OCR) se sigue pasando por ocrmypdf porque es quien hace la
+# optimización, pero con --tesseract-timeout 0 no se ejecuta el OCR.
 
 OPT=3
 command -v jbig2 >/dev/null || {
     OPT=1
     echo ">> (jbig2enc no instalado: instala 'jbig2enc' del AUR para ~50% menos de peso)"
 }
-ocrmypdf -l "$LANGS" --optimize "$OPT" --jobs "$JOBS" \
-    --output-type pdf "$WORK/ensamblado.pdf" "$OUT"
+
+OCR_ARGS=(--optimize "$OPT" --jobs "$JOBS" --output-type pdf)
+if (( HACER_OCR )); then
+    OCR_ARGS+=(-l "$LANGS")
+else
+    # --tesseract-timeout 0 desactiva el OCR conservando la optimización.
+    # --skip-text evita que falle si alguna página ya traía texto.
+    OCR_ARGS+=(--tesseract-timeout 0 --skip-text)
+    # Aunque no se vaya a hacer OCR, ocrmypdf valida el idioma al arrancar y
+    # por defecto pide "eng". Si no está instalado abortaría sin necesidad, así
+    # que le pasamos el primero que haya disponible.
+    SIN_OCR_L=$(tesseract --list-langs 2>/dev/null | tail -n +2 \
+                | grep -vx -e osd -e equ | head -1)
+    if [[ -n "$SIN_OCR_L" ]]; then
+        OCR_ARGS+=(-l "$SIN_OCR_L")
+    fi
+fi
+
+echo ">> Optimizando$( (( HACER_OCR )) && echo " y aplicando OCR")..."
+ocrmypdf "${OCR_ARGS[@]}" "$WORK/ensamblado.pdf" "$WORK/final.pdf"
+
+# ----------------------------------------------------------------------------
+# PASO 6: BORRADO DE METADATOS
+# ----------------------------------------------------------------------------
+# ocrmypdf escribe su propia identificación (Producer, Creator, fechas) y
+# arrastra el XMP del original. Esto deja el PDF completamente limpio.
+# pikepdf viene instalado con ocrmypdf, así que no añade dependencias.
+
+echo ">> Borrando metadatos..."
+python3 - "$WORK/final.pdf" "$OUT" <<'PYEOF'
+"""Elimina TODOS los metadatos del PDF: docinfo, XMP y restos por página."""
+import sys
+import pikepdf
+
+origen, destino = sys.argv[1], sys.argv[2]
+
+with pikepdf.open(origen) as pdf:
+    # 1) Diccionario /Info: título, autor, asunto, palabras clave, productor,
+    #    creador y fechas de creación/modificación. Se borra entero, no se
+    #    deja vacío (leer pdf.docinfo lo recrearía, así que no se toca).
+    if pikepdf.Name.Info in pdf.trailer:
+        del pdf.trailer[pikepdf.Name.Info]
+
+    # 2) XMP del documento (el que leen Acrobat, exiftool, etc.).
+    if pikepdf.Name.Metadata in pdf.Root:
+        del pdf.Root[pikepdf.Name.Metadata]
+
+    # 3) Restos por página: XMP propio y /PieceInfo, donde algunas
+    #    herramientas guardan datos privados de la aplicación.
+    for pagina in pdf.pages:
+        for clave in (pikepdf.Name.Metadata, pikepdf.Name.PieceInfo):
+            if clave in pagina.obj:
+                del pagina.obj[clave]
+
+    # linearize=True reescribe el archivo entero, así nada queda arrastrado
+    # en actualizaciones incrementales del PDF.
+    pdf.save(destino, linearize=True)
+PYEOF
 
 echo ">> Listo: $OUT ($(du -h "$OUT" | cut -f1))"

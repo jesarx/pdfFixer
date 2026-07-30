@@ -1,10 +1,13 @@
-# pdfFixer — `escanea-limpia.sh`
+# pdfFixer — `cleanpdf.sh`
 
 Limpia, endereza, comprime y hace OCR a PDFs escaneados de libros, dejándolos
-ligeros, derechos y con texto **buscable y seleccionable**.
+ligeros, derechos, con todas las páginas del mismo tamaño, sin metadatos y con
+texto **buscable y seleccionable**.
 
 Pensado para escaneos de libros (con portada y contraportada a color e interior
-en blanco y negro), pero funciona con cualquier PDF escaneado.
+en blanco y negro), pero funciona con cualquier PDF escaneado. También sirve
+como simple **compresor/uniformador** para PDFs que ya están armados: ver
+[Recetas](#recetas).
 
 ---
 
@@ -20,11 +23,18 @@ Con cada **página del interior**, en orden:
 
 Con el **documento completo**:
 
-6. Mantiene **portada y contraportada a color**, moviendo la contraportada al final.
-7. Añade una capa de **OCR con Tesseract**, detectando el idioma automáticamente.
+6. Mantiene **portada y contraportada a color**, moviendo la contraportada al final (desactivable con `-k`).
+7. Añade una capa de **OCR con Tesseract**, detectando el idioma automáticamente (desactivable con `-N`).
+8. **Unifica el tamaño** de todas las páginas y **borra todos los metadatos**.
 
-El resultado es un PDF mucho más ligero, con las páginas derechas y limpias, y
-con texto real por debajo de la imagen (se puede buscar y copiar).
+El resultado es un PDF mucho más ligero, con las páginas derechas, limpias y
+todas del mismo tamaño, sin metadatos y con texto real por debajo de la imagen
+(se puede buscar y copiar).
+
+> 🔒 **Metadatos:** la salida **siempre** queda sin título, autor, asunto,
+> palabras clave, productor, creador, fechas ni XMP — ni del original ni de las
+> herramientas que intervienen. No hace falta ninguna opción y no se puede
+> desactivar.
 
 ---
 
@@ -36,8 +46,11 @@ con texto real por debajo de la imagen (se puede buscar y copiar).
 sudo pacman -S poppler imagemagick img2pdf ocrmypdf tesseract \
                tesseract-data-spa tesseract-data-eng \
                python-scikit-image python-scipy python-pillow \
-               python-numpy pngquant
+               python-numpy python-pikepdf pngquant
 ```
+
+(`python-pikepdf` se usa para borrar los metadatos; normalmente ya viene
+instalado porque `ocrmypdf` depende de él.)
 
 Opcional pero **muy recomendado** (reduce ~50 % más el peso final activando JBIG2):
 
@@ -55,7 +68,7 @@ que estén en el `PATH`:
 - `ocrmypdf`
 - `tesseract` (+ los datos de idioma que uses)
 - `magick` o `convert` (**ImageMagick** 7 o 6)
-- `python3` con los módulos **scikit-image, scipy, pillow, numpy**
+- `python3` con los módulos **scikit-image, scipy, pillow, numpy, pikepdf**
 - `jbig2` (**jbig2enc**), opcional
 
 El script comprueba las dependencias al arrancar y te dice exactamente qué falta.
@@ -63,14 +76,14 @@ El script comprueba las dependencias al arrancar y te dice exactamente qué falt
 ### Poner el script a mano
 
 ```bash
-chmod +x escanea-limpia.sh
-./escanea-limpia.sh -h        # muestra la ayuda incrustada
+chmod +x cleanpdf.sh
+./cleanpdf.sh -h        # muestra la ayuda incrustada
 ```
 
 Si lo quieres disponible desde cualquier carpeta:
 
 ```bash
-cp escanea-limpia.sh ~/.local/bin/escanea-limpia   # o /usr/local/bin
+cp cleanpdf.sh ~/.local/bin/cleanpdf   # o /usr/local/bin
 ```
 
 ---
@@ -78,7 +91,7 @@ cp escanea-limpia.sh ~/.local/bin/escanea-limpia   # o /usr/local/bin
 ## Uso
 
 ```
-escanea-limpia.sh entrada.pdf [opciones]
+cleanpdf.sh entrada.pdf [opciones]
 ```
 
 Las opciones pueden ir **antes o después** del nombre del archivo.
@@ -86,21 +99,58 @@ Las opciones pueden ir **antes o después** del nombre del archivo.
 ### Ejemplos rápidos
 
 ```bash
-./escanea-limpia.sh alls.pdf                    # todo automático
-./escanea-limpia.sh alls.pdf -o 45.pdf -s 0.45  # salida con nombre y trazo más fino
-./escanea-limpia.sh alls.pdf -G -d 250          # modo gris, máxima nitidez
-./escanea-limpia.sh alls.pdf -l spa+fra         # español con citas en francés
-./escanea-limpia.sh alls.pdf -D -B              # sin tocar la geometría
+./cleanpdf.sh alls.pdf                    # todo automático
+./cleanpdf.sh alls.pdf -o 45.pdf -s 0.50  # salida con nombre y trazo más fino
+./cleanpdf.sh alls.pdf -G -d 250          # modo gris, máxima nitidez
+./cleanpdf.sh alls.pdf -l spa+fra         # español con citas en francés
+./cleanpdf.sh alls.pdf -D -B              # sin tocar la geometría
+./cleanpdf.sh alls.pdf -k                 # respetar el orden original
+./cleanpdf.sh alls.pdf -N                 # sin OCR
 ```
 
 > ⚠️ **El archivo de salida SIEMPRE va precedido de `-o`.**
 >
 > ```bash
-> ./escanea-limpia.sh alls.pdf 45.pdf -s 0.45      # ✗ MAL (45.pdf se ignora)
-> ./escanea-limpia.sh alls.pdf -o 45.pdf -s 0.45   # ✓ BIEN
+> ./cleanpdf.sh alls.pdf 45.pdf -s 0.50      # ✗ MAL (45.pdf se ignora)
+> ./cleanpdf.sh alls.pdf -o 45.pdf -s 0.50   # ✓ BIEN
 > ```
 >
 > Desde la v4 el script avisa con un error en vez de ignorar el argumento suelto en silencio.
+
+---
+
+## Recetas
+
+### PDF ya armado: sólo unificar tamaño de página y bajar peso
+
+Si el documento **ya está ordenado y procesado** y lo único que necesitas es que
+todas las hojas midan lo mismo y que pese menos, desactiva todo lo demás:
+
+```bash
+./cleanpdf.sh doc.pdf -c 0 -N -D -B
+```
+
+| Opción | Qué desactiva |
+|--------|---------------|
+| `-c 0` | No separa portadas: trata todas las páginas por igual |
+| `-N` | No hace OCR |
+| `-D` | No endereza |
+| `-B` | No limpia bordes |
+
+Lo que **sí** sigue haciendo: unifica el tamaño de todas las páginas, binariza
+y comprime el interior, y deja el PDF **sin metadatos**.
+
+Si el documento ya trae una capa de texto que quieres conservar, usa `-N`: sin
+OCR el script no la toca.
+
+### Conservar el orden original de las páginas
+
+Por defecto la contraportada se mueve al final. Con `-k` se respeta el orden tal
+cual venía en el escaneo:
+
+```bash
+./cleanpdf.sh alls.pdf -k
+```
 
 ---
 
@@ -113,8 +163,9 @@ Las opciones pueden ir **antes o después** del nombre del archivo.
 | `-d DPI` | Resolución de trabajo | `auto` (nativa) |
 | `-l IDIOMA` | Idioma(s) del OCR. Códigos de 3 letras unidos con `+`, el primero es el principal (p. ej. `spa`, `spa+fra`, `spa+lat`) | `auto` (detectar) |
 | `-k` | Conservar orden original (**no** mover la contraportada al final) | mover al final |
+| `-N` | **No hacer OCR.** Sólo limpia, unifica el tamaño y comprime | OCR activado |
 | `-w N` | Ventana Sauvola en px | `auto` (DPI/6, impar) |
-| `-s K` | Sensibilidad Sauvola (grosor del trazo) | `0.34` |
+| `-s K` | Sensibilidad Sauvola (grosor del trazo) | `0.45` |
 | `-u N` | Fuerza del realce previo (0 = desactivado) | `120` |
 | `-a GRADOS` | Inclinación máxima a corregir | `4` |
 | `-D` | Desactivar el enderezado | activado |
@@ -156,9 +207,9 @@ comerse texto legítimo.
 
 1. Comprueba a qué resolución está escaneado: `pdfimages -list tu.pdf | head` (columna `x-ppi`). El script ya trabaja a esa resolución. Forzar `-d` **por encima** del nativo no añade nitidez, sólo interpola y engorda el archivo.
 2. Realce previo (`-u`): `160` para escaneos borrosos, `60` si ya son nítidos.
-3. Sensibilidad (`-s`): ajusta el grosor del trazo.
-   - grueso/embarrado → **sube** k (`-s 0.45`)
-   - roto/incompleto → **baja** k (`-s 0.25`)
+3. Sensibilidad (`-s`): ajusta el grosor del trazo. El default es `0.45`.
+   - grueso/embarrado → **sube** k (`-s 0.50`)
+   - roto/incompleto → **baja** k (`-s 0.30`)
    - rango útil `0.15`–`0.50`.
 4. Ventana (`-w`): default DPI/6. Súbela si hay manchas de fondo grandes; bájala si se pierde letra muy pequeña.
 5. Si nada basta: **modo gris** (`-G`). El 1 bit nunca tendrá el suavizado del original.
@@ -172,6 +223,9 @@ comerse texto legítimo.
 ---
 
 ## Idiomas para el OCR
+
+> Si usas `-N` (sin OCR) esta sección no te aplica: el script no toca idiomas
+> ni necesita tener instalado ningún paquete de Tesseract.
 
 Los códigos son **ISO 639-2** (tres letras, no dos).
 
@@ -268,7 +322,8 @@ valores por defecto sin tener que pasar opciones cada vez:
 | `DPI` | Resolución (vacío = nativa) |
 | `LANGS` | Idiomas del OCR (vacío = autodetectar) |
 | `CANDIDATOS` | Idiomas sueltos que prueba la autodetección |
-| `MOVER_CONTRA` | 1 = contraportada al final; 0 = orden original |
+| `MOVER_CONTRA` | 1 = contraportada al final; 0 (`-k`) = orden original |
+| `HACER_OCR` | 1 = añadir capa de texto; 0 (`-N`) = sin OCR |
 | `DESKEW`, `DESKEW_MAX` | Enderezado y su ángulo máximo |
 | `LIMPIAR_BORDES`, `BORDE_FRAC`, `BORDE_TOL` | Limpieza de cantos negros |
 | `SAUVOLA_W`, `SAUVOLA_K`, `UNSHARP` | Binarización del interior |
@@ -284,9 +339,10 @@ terminar) y sigue estos pasos:
 
 1. **Portadas a color** — `pdftoppm` renderiza las primeras `N` páginas, se reescalan y se comprimen en JPEG.
 2. **Interior** — `pdftoppm -gray` renderiza el resto; un script de Python (incrustado) procesa **cada página en paralelo** (`xargs -P $(nproc)`): limpieza de bordes → enderezado → realce + binarizado Sauvola (o ajuste de niveles en modo gris).
-3. **Detección de idioma** — si no se pasó `-l`, OCR de prueba sobre una página central.
-4. **Ensamblado** — `img2pdf` incrusta las imágenes **sin recomprimir**, reordenando la contraportada al final y fijando un tamaño de página uniforme.
-5. **OCR + optimización** — `ocrmypdf` añade la capa de texto invisible y con `--optimize 3` recomprime (los TIFF G4 pasan a JBIG2 si `jbig2enc` está instalado; sin él baja a nivel 1).
+3. **Detección de idioma** — si no se pasó `-l` (y el OCR está activo), OCR de prueba sobre una página central.
+4. **Ensamblado** — `img2pdf` incrusta las imágenes **sin recomprimir**, reordenando la contraportada al final y fijando un **tamaño de página uniforme** para todo el documento (con `--nodate`, para no incrustar fechas).
+5. **OCR + optimización** — `ocrmypdf` añade la capa de texto invisible y con `--optimize 3` recomprime (los TIFF G4 pasan a JBIG2 si `jbig2enc` está instalado; sin él baja a nivel 1). Con `-N` se sigue pasando por `ocrmypdf` porque es quien optimiza, pero con `--tesseract-timeout 0` para que no ejecute el OCR.
+6. **Borrado de metadatos** — `pikepdf` elimina el diccionario `/Info`, el XMP del documento y los restos por página (`/Metadata`, `/PieceInfo`), y reescribe el archivo linearizado para que nada quede arrastrado en actualizaciones incrementales.
 
 ---
 
