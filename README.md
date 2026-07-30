@@ -23,7 +23,7 @@ Con cada **página del interior**, en orden:
 
 Con el **documento completo**:
 
-6. Mantiene **portada y contraportada a color**, moviendo la contraportada al final (desactivable con `-k`).
+6. Mantiene **portada y contraportada a color** (ver [¿Dónde están las portadas?](#dónde-están-las-portadas)).
 7. Añade una capa de **OCR con Tesseract**, detectando el idioma automáticamente (desactivable con `-N`).
 8. **Unifica el tamaño** de todas las páginas y **borra todos los metadatos**.
 
@@ -35,6 +35,50 @@ todas del mismo tamaño, sin metadatos y con texto real por debajo de la imagen
 > palabras clave, productor, creador, fechas ni XMP — ni del original ni de las
 > herramientas que intervienen. No hace falta ninguna opción y no se puede
 > desactivar.
+
+---
+
+## ¿Dónde están las portadas?
+
+Hay dos formas típicas de escanear un libro y el script cubre las dos. **Elige
+según cómo esté tu PDF**, porque es lo único que cambia entre un caso y otro.
+
+### (a) Portada y contraportada juntas al inicio → default, opción `-c`
+
+```
+[portada] [contraportada] [interior ...]
+```
+
+Es lo que sale al escanear la cubierta completa de una pasada: las dos caras
+quedan al principio. El script las separa y **manda la contraportada al final**.
+
+```bash
+./cleanpdf.sh libro.pdf          # equivale a -c 2
+```
+
+### (b) Portada 1ª página y contraportada última → opción `-e`
+
+```
+[portada] [interior ...] [contraportada]
+```
+
+Las cubiertas **ya están en su sitio**. Con `-e` el script las deja a color donde
+están, **no mueve nada**, y procesa como interior todo lo de en medio.
+
+```bash
+./cleanpdf.sh libro.pdf -e
+```
+
+`-e` implica `-c 1` (sólo la primera página a color al inicio) salvo que pases
+`-c` a mano. Si tu PDF tiene además una guarda a color después de la portada,
+combínalos:
+
+```bash
+./cleanpdf.sh libro.pdf -e -c 2   # págs 1 y 2 a color + la última a color
+```
+
+Con `-e` la opción `-k` no hace nada, porque no hay ningún reordenamiento que
+desactivar.
 
 ---
 
@@ -106,6 +150,7 @@ Las opciones pueden ir **antes o después** del nombre del archivo.
 ./cleanpdf.sh alls.pdf -D -B              # sin tocar la geometría
 ./cleanpdf.sh alls.pdf -k                 # respetar el orden original
 ./cleanpdf.sh alls.pdf -N                 # sin OCR
+./cleanpdf.sh alls.pdf -e                 # portada 1ª y contraportada última
 ```
 
 > ⚠️ **El archivo de salida SIEMPRE va precedido de `-o`.**
@@ -143,6 +188,16 @@ y comprime el interior, y deja el PDF **sin metadatos**.
 Si el documento ya trae una capa de texto que quieres conservar, usa `-N`: sin
 OCR el script no la toca.
 
+### Libro con portada 1ª y contraportada última, ya en su sitio
+
+```bash
+./cleanpdf.sh libro.pdf -e
+```
+
+La primera y la última página se quedan **a color y tal cual están**; todo lo de
+en medio se limpia, endereza, binariza y comprime. No se reordena nada. Ver
+[¿Dónde están las portadas?](#dónde-están-las-portadas).
+
 ### Conservar el orden original de las páginas
 
 Por defecto la contraportada se mueve al final. Con `-k` se respeta el orden tal
@@ -162,6 +217,7 @@ cual venía en el escaneo:
 | `-c N` | Páginas a color al inicio (pág 1 = portada, 2..N = contraportada). `-c 0` procesa todo como interior | `2` |
 | `-d DPI` | Resolución de trabajo | `auto` (nativa) |
 | `-l IDIOMA` | Idioma(s) del OCR. Códigos de 3 letras unidos con `+`, el primero es el principal (p. ej. `spa`, `spa+fra`, `spa+lat`) | `auto` (detectar) |
+| `-e` | **Extremos:** portada = 1ª página y contraportada = **última**, ya en su sitio. Las deja a color y no reordena nada. Implica `-c 1` | desactivado |
 | `-k` | Conservar orden original (**no** mover la contraportada al final) | mover al final |
 | `-N` | **No hacer OCR.** Sólo limpia, unifica el tamaño y comprime | OCR activado |
 | `-w N` | Ventana Sauvola en px | `auto` (DPI/6, impar) |
@@ -324,6 +380,7 @@ valores por defecto sin tener que pasar opciones cada vez:
 | `CANDIDATOS` | Idiomas sueltos que prueba la autodetección |
 | `MOVER_CONTRA` | 1 = contraportada al final; 0 (`-k`) = orden original |
 | `HACER_OCR` | 1 = añadir capa de texto; 0 (`-N`) = sin OCR |
+| `EXTREMOS` | 1 (`-e`) = portada 1ª y contraportada última, sin reordenar |
 | `DESKEW`, `DESKEW_MAX` | Enderezado y su ángulo máximo |
 | `LIMPIAR_BORDES`, `BORDE_FRAC`, `BORDE_TOL` | Limpieza de cantos negros |
 | `SAUVOLA_W`, `SAUVOLA_K`, `UNSHARP` | Binarización del interior |
@@ -337,10 +394,10 @@ valores por defecto sin tener que pasar opciones cada vez:
 El script trabaja en un directorio temporal (`mktemp -d`, se borra solo al
 terminar) y sigue estos pasos:
 
-1. **Portadas a color** — `pdftoppm` renderiza las primeras `N` páginas, se reescalan y se comprimen en JPEG.
-2. **Interior** — `pdftoppm -gray` renderiza el resto; un script de Python (incrustado) procesa **cada página en paralelo** (`xargs -P $(nproc)`): limpieza de bordes → enderezado → realce + binarizado Sauvola (o ajuste de niveles en modo gris).
+1. **Portadas a color** — `pdftoppm` renderiza las primeras `N` páginas (y con `-e` también la última), se reescalan y se comprimen en JPEG con `-strip`, que ya les quita los metadatos.
+2. **Interior** — `pdftoppm -gray` renderiza el resto (con `-e`, hasta la penúltima); un script de Python (incrustado) procesa **cada página en paralelo** (`xargs -P $(nproc)`): limpieza de bordes → enderezado → realce + binarizado Sauvola (o ajuste de niveles en modo gris).
 3. **Detección de idioma** — si no se pasó `-l` (y el OCR está activo), OCR de prueba sobre una página central.
-4. **Ensamblado** — `img2pdf` incrusta las imágenes **sin recomprimir**, reordenando la contraportada al final y fijando un **tamaño de página uniforme** para todo el documento (con `--nodate`, para no incrustar fechas).
+4. **Ensamblado** — `img2pdf` incrusta las imágenes **sin recomprimir** y fija un **tamaño de página uniforme** para todo el documento (con `--nodate`, para no incrustar fechas). El orden depende del modo: con `-e` se respeta tal cual, y si no, la contraportada se mueve al final salvo `-k`.
 5. **OCR + optimización** — `ocrmypdf` añade la capa de texto invisible y con `--optimize 3` recomprime (los TIFF G4 pasan a JBIG2 si `jbig2enc` está instalado; sin él baja a nivel 1). Con `-N` se sigue pasando por `ocrmypdf` porque es quien optimiza, pero con `--tesseract-timeout 0` para que no ejecute el OCR.
 6. **Borrado de metadatos** — `pikepdf` elimina el diccionario `/Info`, el XMP del documento y los restos por página (`/Metadata`, `/PieceInfo`), y reescribe el archivo linearizado para que nada quede arrastrado en actualizaciones incrementales.
 

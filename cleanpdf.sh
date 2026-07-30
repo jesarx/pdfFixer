@@ -19,9 +19,24 @@
 #    4. Realza los bordes del texto y binariza con el algoritmo de Sauvola.
 #    5. Comprime como TIFF G4 / JBIG2.
 #  Y con el documento completo:
-#    6. Portada y contraportada a color, con la contraportada al final.
+#    6. Portada y contraportada a color (ver "DÓNDE ESTÁN LAS PORTADAS").
 #    7. OCR con tesseract, detectando el idioma automáticamente.
 #    8. UNIFICA EL TAMAÑO de todas las páginas y BORRA TODOS LOS METADATOS.
+#
+#  DÓNDE ESTÁN LAS PORTADAS: hay dos formas típicas de escanear un libro y el
+#  script cubre las dos. Elige según cómo esté TU pdf:
+#
+#    (a) Portada y contraportada JUNTAS AL INICIO  → default, opción -c
+#        [portada] [contraportada] [interior...]
+#        Es lo que sale al escanear la cubierta completa de una pasada.
+#        El script las separa y manda la contraportada al final.
+#            ./cleanpdf.sh libro.pdf          (equivale a -c 2)
+#
+#    (b) Portada 1ª página y contraportada ÚLTIMA  → opción -e
+#        [portada] [interior...] [contraportada]
+#        Ya están en su sitio: se dejan a color donde están y no se mueve
+#        nada. El interior es todo lo de en medio.
+#            ./cleanpdf.sh libro.pdf -e
 #
 #  USO:
 #    cleanpdf.sh entrada.pdf [opciones]
@@ -35,6 +50,9 @@
 #      -l IDIOMA   Idioma(s) del OCR. Códigos de 3 letras unidos con "+",
 #                  el primero es el principal:  spa  /  spa+fra  /  spa+lat
 #                  (default: autodetectar. Lista completa de códigos abajo)
+#      -e          EXTREMOS: portada = 1ª página, contraportada = ÚLTIMA
+#                  página, las dos ya en su sitio. Se dejan a color tal cual
+#                  y no se reordena nada. Implica -c 1 salvo que pases -c.
 #      -k          Conservar orden original (NO mover contraportada al final)
 #      -N          NO hacer OCR (sólo limpiar, unificar tamaño y comprimir)
 #      -w N        Ventana Sauvola en px      (default: auto = DPI/6, impar)
@@ -53,6 +71,7 @@
 #      ./cleanpdf.sh alls.pdf -l spa+fra       # español con citas en francés
 #      ./cleanpdf.sh alls.pdf -D -B            # sin tocar geometría
 #      ./cleanpdf.sh alls.pdf -k               # respetar el orden original
+#      ./cleanpdf.sh alls.pdf -e               # portada 1ª y contraportada última
 #      ./cleanpdf.sh alls.pdf -c 0 -N -D -B    # sólo unificar tamaño y comprimir
 #
 #  PDF YA ARMADO AL QUE SÓLO LE FALTA PESO Y TAMAÑO UNIFORME:
@@ -81,7 +100,7 @@
 #    sudo pacman -S poppler imagemagick img2pdf ocrmypdf tesseract \
 #                   tesseract-data-spa tesseract-data-eng \
 #                   python-scikit-image python-scipy python-pillow \
-#                   python-numpy pngquant
+#                   python-numpy python-pikepdf pngquant
 #    yay -S jbig2enc     # opcional pero MUY recomendado: activa JBIG2 y
 #                        # reduce ~50% más el peso final
 #
@@ -129,9 +148,9 @@
 #     Forzar -d POR ENCIMA del nativo NO añade nitidez, sólo interpola y
 #     engorda el archivo.
 #  2) Realce previo (-u): 160 para escaneos borrosos, 60 si ya son nítidos.
-#  3) Sensibilidad (-s): ajusta el GROSOR del trazo.
-#        grueso/embarrado → SUBE k (-s 0.45)
-#        roto/incompleto  → BAJA k (-s 0.25)
+#  3) Sensibilidad (-s): ajusta el GROSOR del trazo. Default 0.45.
+#        grueso/embarrado → SUBE k (-s 0.50)
+#        roto/incompleto  → BAJA k (-s 0.30)
 #     Rango útil 0.15–0.50.
 #  4) Ventana (-w): default DPI/6. Súbela si hay manchas de fondo grandes,
 #     bájala si se pierde letra muy pequeña.
@@ -223,6 +242,8 @@ CANDIDATOS=(spa eng) # Idiomas SUELTOS que se prueban en la autodetección.
                      # Ver "IDIOMAS PARA EL OCR" en la cabecera.
 MOVER_CONTRA=1       # 1 = contraportada al final; 0 (-k) = orden original
 HACER_OCR=1          # 1 = añadir capa de texto; 0 (-N) = sin OCR
+EXTREMOS=0           # 1 (-e) = portada 1ª pág y contraportada ÚLTIMA pág, ya
+                     # en su sitio: se dejan a color y NO se reordena nada.
 
 # --- Geometría de la página ---
 DESKEW=1             # 1 = enderezar renglones; 0 (-D) = no tocar
@@ -258,10 +279,11 @@ COVER_QUALITY=70     # Calidad JPEG de las portadas (1-100)
 
 INPUT=""
 OUT=""
+COVER_SET=0          # ¿el usuario pasó -c explícitamente? (ver -e más abajo)
 while (( $# )); do
     case "$1" in
         -o) OUT="$2"; shift 2 ;;
-        -c) COVER_PAGES="$2"; shift 2 ;;
+        -c) COVER_PAGES="$2"; COVER_SET=1; shift 2 ;;
         -d) DPI="$2"; shift 2 ;;
         -l) LANGS="$2"; shift 2 ;;
         -w) SAUVOLA_W="$2"; shift 2 ;;
@@ -271,6 +293,7 @@ while (( $# )); do
         -q) GRIS_QUALITY="$2"; shift 2 ;;
         -k) MOVER_CONTRA=0; shift ;;
         -N) HACER_OCR=0; shift ;;
+        -e) EXTREMOS=1; shift ;;
         -D) DESKEW=0; shift ;;
         -B) LIMPIAR_BORDES=0; shift ;;
         -G) MODO_GRIS=1; shift ;;
@@ -291,6 +314,13 @@ done
 [[ -n "$INPUT" ]] || { echo "Uso: $0 entrada.pdf [-o salida.pdf] [opciones]  ($0 -h para ayuda)" >&2; exit 1; }
 [[ -f "$INPUT" ]] || { echo "No existe: $INPUT" >&2; exit 1; }
 [[ -n "$OUT" ]] || OUT="${INPUT%.pdf}_limpio.pdf"
+
+# Con -e la portada es la 1ª página y la contraportada la ÚLTIMA. En ese caso
+# el default de 2 páginas de color al inicio no aplica: sólo la primera. Si el
+# usuario pasó -c a mano se respeta lo que haya pedido.
+if (( EXTREMOS )) && (( ! COVER_SET )); then
+    COVER_PAGES=1
+fi
 
 # ----------------------------------------------------------------------------
 # VERIFICACIÓN DE DEPENDENCIAS
@@ -338,6 +368,22 @@ trap 'rm -rf "$WORK"' EXIT
 
 TOTAL=$(pdfinfo "$INPUT" | awk '/^Pages:/{print $2}')
 
+# Última página del INTERIOR. Con -e la última página es la contraportada a
+# color, así que el interior termina una antes.
+if (( EXTREMOS )); then
+    INT_FIN=$(( TOTAL - 1 ))
+else
+    INT_FIN=$TOTAL
+fi
+
+# El interior va de COVER_PAGES+1 a INT_FIN: tiene que quedar al menos una
+# página. Si no, avisamos aquí en vez de fallar más adelante de mala manera.
+if (( COVER_PAGES + 1 > INT_FIN )); then
+    echo "Error: no queda ninguna página de interior que procesar." >&2
+    echo "       El PDF tiene $TOTAL página(s), con -c $COVER_PAGES al inicio$( (( EXTREMOS )) && echo " y -e (última a color)")." >&2
+    exit 1
+fi
+
 # ----------------------------------------------------------------------------
 # DETECCIÓN DE LA RESOLUCIÓN NATIVA DEL ESCANEO
 # ----------------------------------------------------------------------------
@@ -362,7 +408,10 @@ if [[ -z "$SAUVOLA_W" ]]; then
 fi
 
 MODO=$( (( MODO_GRIS )) && echo "GRIS q=$GRIS_QUALITY" || echo "1bit w=$SAUVOLA_W k=$SAUVOLA_K u=$UNSHARP" )
-echo ">> $TOTAL págs | color: 1-$COVER_PAGES | ${DPI} dpi | $MODO | deskew=$DESKEW bordes=$LIMPIAR_BORDES ocr=$HACER_OCR | $JOBS hilos"
+COLOR_INFO="1-$COVER_PAGES"
+(( COVER_PAGES == 0 )) && COLOR_INFO="ninguna"
+(( EXTREMOS )) && COLOR_INFO="$COLOR_INFO + $TOTAL (última)"
+echo ">> $TOTAL págs | color: $COLOR_INFO | interior: $((COVER_PAGES+1))-$INT_FIN | ${DPI} dpi | $MODO | deskew=$DESKEW bordes=$LIMPIAR_BORDES ocr=$HACER_OCR | $JOBS hilos"
 
 # ----------------------------------------------------------------------------
 # TAMAÑO DE PÁGINA DESTINO
@@ -378,19 +427,35 @@ echo ">> Tamaño de página destino: ${PW}x${PH} pts"
 # PASO 1: PORTADAS A COLOR
 # ----------------------------------------------------------------------------
 
-# Con -c 0 se procesa todo el documento como interior (libro sin portadas
-# a color, o PDF que ya viene recortado).
-if (( COVER_PAGES > 0 )); then
-    echo ">> Procesando portadas (color)..."
-    pdftoppm -png -r "$DPI" -f 1 -l "$COVER_PAGES" "$INPUT" "$WORK/cov"
-    for f in "$WORK"/cov-*.png; do
+# Reduce y comprime en JPEG todos los PNG de un prefijo dado.
+# -strip quita de paso los metadatos de la imagen.
+comprime_color() {
+    local f
+    for f in "$1"-*.png; do
+        [[ -e "$f" ]] || continue
         $IM "$f" -resize "x${COVER_MAX_H}>" \
             -strip -interlace none -sampling-factor 4:2:0 \
             -quality "$COVER_QUALITY" "${f%.png}.jpg"
         rm "$f"
     done
+}
+
+# Con -c 0 se procesa todo el documento como interior (libro sin portadas
+# a color, o PDF que ya viene recortado).
+if (( COVER_PAGES > 0 )); then
+    echo ">> Procesando portadas (color)..."
+    pdftoppm -png -r "$DPI" -f 1 -l "$COVER_PAGES" "$INPUT" "$WORK/cov"
+    comprime_color "$WORK/cov"
 else
     echo ">> Sin portadas a color (-c 0)"
+fi
+
+# Con -e la ÚLTIMA página es la contraportada: se saca a color y se queda
+# donde está, sin reordenar nada.
+if (( EXTREMOS )); then
+    echo ">> Procesando contraportada (última página, color)..."
+    pdftoppm -png -r "$DPI" -f "$TOTAL" -l "$TOTAL" "$INPUT" "$WORK/contra"
+    comprime_color "$WORK/contra"
 fi
 
 # ----------------------------------------------------------------------------
@@ -507,7 +572,7 @@ if __name__ == '__main__':
 PYEOF
 
 echo ">> Procesando interior..."
-pdftoppm -gray -r "$DPI" -f $((COVER_PAGES+1)) -l "$TOTAL" "$INPUT" "$WORK/pag"
+pdftoppm -gray -r "$DPI" -f $((COVER_PAGES+1)) -l "$INT_FIN" "$INPUT" "$WORK/pag"
 
 if (( MODO_GRIS )); then MODO_PY=gris; EXT=jpg; else MODO_PY=bin; EXT=tif; fi
 
@@ -557,13 +622,20 @@ fi
 # img2pdf incrusta las imágenes SIN recomprimir y fija el mismo tamaño de
 # página en pts para todo el documento.
 
-echo ">> Ensamblando PDF (contraportada al final: $MOVER_CONTRA)..."
 mapfile -t COVS < <(ls "$WORK"/cov-*.jpg 2>/dev/null | sort)
+mapfile -t CONTRAS < <(ls "$WORK"/contra-*.jpg 2>/dev/null | sort)
 mapfile -t PAGS < <(ls "$WORK"/pag-*."$EXT" | sort)
 
-if (( MOVER_CONTRA )) && (( ${#COVS[@]} > 1 )); then
+if (( EXTREMOS )); then
+    # La contraportada ya venía al final: se respeta el orden tal cual.
+    echo ">> Ensamblando PDF (portada y contraportada en su sitio)..."
+    ORDEN=( "${COVS[@]}" "${PAGS[@]}" "${CONTRAS[@]}" )
+elif (( MOVER_CONTRA )) && (( ${#COVS[@]} > 1 )); then
+    # Las contraportadas venían al inicio: se mandan al final.
+    echo ">> Ensamblando PDF (contraportada al final)..."
     ORDEN=( "${COVS[0]}" "${PAGS[@]}" "${COVS[@]:1}" )
 else
+    echo ">> Ensamblando PDF (orden original)..."
     ORDEN=( "${COVS[@]}" "${PAGS[@]}" )
 fi
 
