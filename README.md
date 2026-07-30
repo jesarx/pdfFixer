@@ -27,6 +27,11 @@ Con el **documento completo**:
 7. Añade una capa de **OCR con Tesseract**, detectando el idioma automáticamente (desactivable con `-N`).
 8. **Unifica el tamaño** de todas las páginas y **borra todos los metadatos**.
 
+> 📐 **Tamaño de página:** manda siempre el de la **primera página del PDF**
+> (la portada), en los dos modos. El resto de páginas se encajan ahí
+> **centradas y conservando su proporción**: una página más estrecha queda con
+> márgenes a los lados, nunca estirada ni recortada.
+
 El resultado es un PDF mucho más ligero, con las páginas derechas, limpias y
 todas del mismo tamaño, sin metadatos y con texto real por debajo de la imagen
 (se puede buscar y copiar).
@@ -184,15 +189,15 @@ completamente aparte del resto del script:
 | **Peso** | Prácticamente idéntico al original |
 | **Metadatos** | Se borran, igual que en el modo normal |
 
-El **tamaño destino es el más frecuente** del documento, así que la mayoría de
-páginas no se tocan y sólo se ajustan las que se salen (normalmente las
-cubiertas). El script te enseña qué tamaños encontró y cuál eligió:
+El **tamaño destino es el de la primera página** (la portada), igual que en el
+modo normal. El script te enseña qué tamaños encontró:
 
 ```
+>> Tamaño destino (página 1): 359.58 x 553.76 pts
 >> Tamaños encontrados: 2
->>   328.45 x 551.44 pts  (12 pág)  <- destino
->>   359.58 x 553.76 pts  (2 pág)
->> Páginas ajustadas: 2 de 14
+>>   328.45 x 551.44 pts  (12 pág)
+>>   359.58 x 553.76 pts  (2 pág)  <- destino
+>> Páginas ajustadas: 12 de 14
 ```
 
 **No hace falta rehacer el OCR.** La capa de texto vive dentro del contenido de

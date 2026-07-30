@@ -87,8 +87,9 @@
 #  centrado. NO rasteriza, NO recomprime y NO vuelve a hacer OCR.
 #  Qué conserva: las imágenes byte a byte (JBIG2, JPEG, lo que sea), la capa
 #  de texto del OCR y la calidad. El peso se queda prácticamente igual.
-#  Tamaño destino: el MÁS FRECUENTE del documento; así la mayoría de páginas
-#  no se tocan y sólo se ajustan las que se salen (normalmente las cubiertas).
+#  Tamaño destino: el de la PRIMERA página (la portada), igual que en el modo
+#  normal. Las páginas más estrechas quedan centradas con márgenes a los
+#  lados; nunca se estiran ni se recortan.
 #  Los metadatos se borran, igual que en el modo normal.
 #
 #  ¿POR QUÉ NO USAR EL MODO NORMAL PARA ESO? Porque el pipeline normal
@@ -348,6 +349,67 @@ if (( EXTREMOS )) && (( ! COVER_SET )); then
     COVER_PAGES=1
 fi
 
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+# ----------------------------------------------------------------------------
+# FUNCIONES COMPARTIDAS POR LOS DOS MODOS
+# ----------------------------------------------------------------------------
+
+# borra_metadatos ORIGEN DESTINO
+# Deja el PDF sin metadatos de ningún tipo. Se usa igual al final del modo
+# normal y del modo -U, así que vive aquí y no duplicado en cada camino.
+borra_metadatos() {
+    python3 - "$1" "$2" <<'PYEOF'
+"""Elimina TODOS los metadatos del PDF: docinfo, XMP y restos por página."""
+import sys
+import pikepdf
+
+origen, destino = sys.argv[1], sys.argv[2]
+
+with pikepdf.open(origen) as pdf:
+    # 1) Diccionario /Info: título, autor, asunto, palabras clave, productor,
+    #    creador y fechas de creación/modificación. Se borra entero, no se
+    #    deja vacío (leer pdf.docinfo lo recrearía, así que no se toca).
+    if pikepdf.Name.Info in pdf.trailer:
+        del pdf.trailer[pikepdf.Name.Info]
+
+    # 2) XMP del documento (el que leen Acrobat, exiftool, etc.).
+    if pikepdf.Name.Metadata in pdf.Root:
+        del pdf.Root[pikepdf.Name.Metadata]
+
+    # 3) Restos por página: XMP propio y /PieceInfo, donde algunas
+    #    herramientas guardan datos privados de la aplicación.
+    for pagina in pdf.pages:
+        for clave in (pikepdf.Name.Metadata, pikepdf.Name.PieceInfo):
+            if clave in pagina.obj:
+                del pagina.obj[clave]
+
+    # linearize=True reescribe el archivo entero, así nada queda arrastrado
+    # en actualizaciones incrementales del PDF.
+    pdf.save(destino, linearize=True)
+PYEOF
+}
+
+# informe_final — compara el peso de entrada y salida y avisa si creció.
+informe_final() {
+    local bytes_in bytes_out
+    bytes_in=$(stat -c%s "$INPUT")
+    bytes_out=$(stat -c%s "$OUT")
+    echo ">> Listo: $OUT ($(du -h "$OUT" | cut -f1), origen $(du -h "$INPUT" | cut -f1))"
+    (( bytes_out > bytes_in )) || return 0
+    if (( UNIFORMAR )); then
+        echo ">> (creció un $(( 100 * bytes_out / bytes_in - 100 ))%: coste de linearizar; las imágenes no se tocaron)"
+        return 0
+    fi
+    echo ">> AVISO: la salida pesa más que el original ($(( 100 * bytes_out / bytes_in ))%)."
+    echo ">>   El PDF de origen ya venía bien comprimido. Cosas que ayudan:"
+    echo ">>     - si sólo querías igualar el tamaño de página, usa -U"
+    echo ">>     - instalar jbig2enc (del AUR): suele quitar ~45% del interior"
+    (( MODO_GRIS )) && echo ">>     - quitar -G: el modo gris pesa ~7x más que 1 bit"
+    echo ">>     - bajar la resolución con -d (p.ej. -d 200)"
+}
+
 # ----------------------------------------------------------------------------
 # MODO UNIFORMAR (-U): sólo igualar el tamaño de página
 # ----------------------------------------------------------------------------
@@ -371,12 +433,11 @@ if (( UNIFORMAR )); then
     echo ">> Modo uniformar (-U): sólo se iguala el tamaño de página."
     echo ">>   No se rasteriza, no se recomprime y no se toca el OCR."
 
-    python3 - "$INPUT" "$OUT" <<'PYEOF'
+    python3 - "$INPUT" "$WORK/uniforme.pdf" <<'PYEOF'
 """Iguala el tamaño de todas las páginas sin tocar el contenido.
 
-El tamaño destino es el MÁS FRECUENTE del documento (en empate, el de mayor
-área): así la mayoría de las páginas no se modifican en absoluto y sólo se
-ajustan las que se salen, que suelen ser las cubiertas.
+El tamaño destino es el de la PRIMERA página del PDF (la portada), que es el
+que manda en todo el documento.
 """
 import sys
 from collections import Counter
@@ -406,24 +467,21 @@ def giro(pagina):
 
 
 with pikepdf.open(origen) as pdf:
-    # 1) Tamaño destino: el más frecuente TAL COMO SE VE (ya rotado).
-    #    Se agrupa por valor redondeado, pero se conserva la medida EXACTA de
-    #    la primera página de cada grupo: si se usara la redondeada, las
-    #    páginas que no se tocan quedarían con un tamaño ligeramente distinto
-    #    del que se le pone a las ajustadas y no habría uniformidad real.
+    # 1) Tamaño destino: el de la PRIMERA página, tal como SE VE (ya rotado).
+    TW, TH, _, _ = medidas(pdf.pages[0])
+    if giro(pdf.pages[0]) in (90, 270):
+        TW, TH = TH, TW
+
+    # Inventario de lo que hay, sólo para informar.
     vistos = Counter()
-    exactos = {}
     for pagina in pdf.pages:
         an, al, _, _ = medidas(pagina)
         if giro(pagina) in (90, 270):
             an, al = al, an
-        clave = (round(an, 2), round(al, 2))
-        vistos[clave] += 1
-        exactos.setdefault(clave, (an, al))
-    clave_destino = max(vistos.items(),
-                        key=lambda kv: (kv[1], kv[0][0] * kv[0][1]))[0]
-    TW, TH = exactos[clave_destino]
+        vistos[(round(an, 2), round(al, 2))] += 1
 
+    clave_destino = (round(TW, 2), round(TH, 2))
+    print(f">> Tamaño destino (página 1): {clave_destino[0]} x {clave_destino[1]} pts")
     print(f">> Tamaños encontrados: {len(vistos)}")
     for (an, al), n in vistos.most_common():
         marca = "  <- destino" if (an, al) == clave_destino else ""
@@ -462,26 +520,12 @@ with pikepdf.open(origen) as pdf:
                 del pagina.obj[caja]
 
     print(f">> Páginas ajustadas: {ajustadas} de {len(pdf.pages)}")
-
-    # 3) Metadatos fuera, igual que en el modo normal.
-    if pikepdf.Name.Info in pdf.trailer:
-        del pdf.trailer[pikepdf.Name.Info]
-    if pikepdf.Name.Metadata in pdf.Root:
-        del pdf.Root[pikepdf.Name.Metadata]
-    for pagina in pdf.pages:
-        for clave in (pikepdf.Name.Metadata, pikepdf.Name.PieceInfo):
-            if clave in pagina.obj:
-                del pagina.obj[clave]
-
-    pdf.save(destino, linearize=True)
+    pdf.save(destino)
 PYEOF
 
-    BYTES_IN=$(stat -c%s "$INPUT")
-    BYTES_OUT=$(stat -c%s "$OUT")
-    echo ">> Listo: $OUT ($(du -h "$OUT" | cut -f1), origen $(du -h "$INPUT" | cut -f1))"
-    if (( BYTES_OUT > BYTES_IN )); then
-        echo ">> (creció un $(( 100 * BYTES_OUT / BYTES_IN - 100 ))%: coste de linearizar; las imágenes no se tocaron)"
-    fi
+    echo ">> Borrando metadatos..."
+    borra_metadatos "$WORK/uniforme.pdf" "$OUT"
+    informe_final
     exit 0
 fi
 
@@ -525,9 +569,6 @@ if (( HACER_OCR )) && [[ -n "$LANGS" ]]; then
         exit 1
     fi
 fi
-
-WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
 
 TOTAL=$(pdfinfo "$INPUT" | awk '/^Pages:/{print $2}')
 
@@ -593,12 +634,14 @@ echo ">> $TOTAL págs | color: $COLOR_INFO | interior: $((COVER_PAGES+1))-$INT_F
 # ----------------------------------------------------------------------------
 # TAMAÑO DE PÁGINA DESTINO
 # ----------------------------------------------------------------------------
-# Se toma el tamaño (en puntos PDF) de la primera página interior como tamaño
-# canónico. Las portadas se encajan centradas ahí (img2pdf --fit into).
+# Manda el tamaño (en puntos PDF) de la PRIMERA página del documento, o sea el
+# de la portada. Todo el resto se encaja centrado ahí (img2pdf --fit into),
+# conservando su proporción: una página más estrecha que la portada queda con
+# márgenes a los lados, no estirada.
 
-read -r PW PH < <(pdfinfo -f $((COVER_PAGES+1)) -l $((COVER_PAGES+1)) "$INPUT" \
+read -r PW PH < <(pdfinfo -f 1 -l 1 "$INPUT" \
                   | awk '/^Page.*size:/{print $4, $6}')
-echo ">> Tamaño de página destino: ${PW}x${PH} pts"
+echo ">> Tamaño de página destino (página 1): ${PW}x${PH} pts"
 
 # ----------------------------------------------------------------------------
 # PASO 1: PORTADAS A COLOR
@@ -872,46 +915,6 @@ ocrmypdf "${OCR_ARGS[@]}" "$WORK/ensamblado.pdf" "$WORK/final.pdf"
 # pikepdf viene instalado con ocrmypdf, así que no añade dependencias.
 
 echo ">> Borrando metadatos..."
-python3 - "$WORK/final.pdf" "$OUT" <<'PYEOF'
-"""Elimina TODOS los metadatos del PDF: docinfo, XMP y restos por página."""
-import sys
-import pikepdf
+borra_metadatos "$WORK/final.pdf" "$OUT"
 
-origen, destino = sys.argv[1], sys.argv[2]
-
-with pikepdf.open(origen) as pdf:
-    # 1) Diccionario /Info: título, autor, asunto, palabras clave, productor,
-    #    creador y fechas de creación/modificación. Se borra entero, no se
-    #    deja vacío (leer pdf.docinfo lo recrearía, así que no se toca).
-    if pikepdf.Name.Info in pdf.trailer:
-        del pdf.trailer[pikepdf.Name.Info]
-
-    # 2) XMP del documento (el que leen Acrobat, exiftool, etc.).
-    if pikepdf.Name.Metadata in pdf.Root:
-        del pdf.Root[pikepdf.Name.Metadata]
-
-    # 3) Restos por página: XMP propio y /PieceInfo, donde algunas
-    #    herramientas guardan datos privados de la aplicación.
-    for pagina in pdf.pages:
-        for clave in (pikepdf.Name.Metadata, pikepdf.Name.PieceInfo):
-            if clave in pagina.obj:
-                del pagina.obj[clave]
-
-    # linearize=True reescribe el archivo entero, así nada queda arrastrado
-    # en actualizaciones incrementales del PDF.
-    pdf.save(destino, linearize=True)
-PYEOF
-
-# Comparación de peso. Si la salida creció, casi siempre es que el PDF de
-# origen ya venía bien comprimido: avisamos en vez de dejarlo pasar callando.
-BYTES_IN=$(stat -c%s "$INPUT")
-BYTES_OUT=$(stat -c%s "$OUT")
-echo ">> Listo: $OUT ($(du -h "$OUT" | cut -f1), origen $(du -h "$INPUT" | cut -f1))"
-if (( BYTES_OUT > BYTES_IN )); then
-    echo ">> AVISO: la salida pesa más que el original ($(( 100 * BYTES_OUT / BYTES_IN ))%)."
-    echo ">>   El PDF de origen ya venía bien comprimido. Cosas que ayudan:"
-    echo ">>     - instalar jbig2enc (del AUR): suele quitar ~50% del interior"
-    (( MODO_GRIS )) && echo ">>     - quitar -G: el modo gris pesa ~7x más que 1 bit"
-    echo ">>     - bajar la resolución con -d (p.ej. -d 200)"
-    echo ">>   Si el original ya te servía, quizá este PDF no necesitaba limpieza."
-fi
+informe_final
