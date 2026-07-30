@@ -668,11 +668,18 @@ img2pdf --pagesize "${PW}ptx${PH}pt" --fit into --nodate \
 # Con -N (sin OCR) se sigue pasando por ocrmypdf porque es quien hace la
 # optimización, pero con --tesseract-timeout 0 no se ejecuta el OCR.
 
+# --optimize 3 necesita jbig2enc (para el 1 bit) Y pngquant (para el color).
+# Si falta cualquiera de los dos bajamos a 1: ocrmypdf abortaría al final,
+# después de haber procesado el libro entero.
 OPT=3
-command -v jbig2 >/dev/null || {
+if ! command -v jbig2 >/dev/null; then
     OPT=1
-    echo ">> (jbig2enc no instalado: instala 'jbig2enc' del AUR para ~50% menos de peso)"
-}
+    echo ">> (jbig2enc no instalado: instala 'jbig2enc' del AUR para ~45% menos de peso)"
+elif ! command -v pngquant >/dev/null; then
+    OPT=1
+    echo ">> (pngquant no instalado: hace falta para --optimize 3." >&2
+    echo ">>  Instala con: sudo pacman -S pngquant)" >&2
+fi
 
 OCR_ARGS=(--optimize "$OPT" --jobs "$JOBS" --output-type pdf)
 if (( HACER_OCR )); then

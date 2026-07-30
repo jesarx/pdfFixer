@@ -279,13 +279,39 @@ la salida acabe pesando más. Qué mirar, en orden:
    ocurre si fuerzas `-d` por encima del nativo. Quita el `-d` o bájalo.
 
 2. **¿Tienes `jbig2enc`?** Sin él, el interior se queda en TIFF G4 en vez de
-   JBIG2. El script lo avisa al correr. Instalarlo (`yay -S jbig2enc`) suele
-   quitar ~50 % del interior.
+   JBIG2. El script lo avisa al correr. Es el factor más grande con diferencia:
+   en un libro de prueba de 14 páginas a 340 ppi medimos **56.9 KB/pág con G4
+   frente a 31.3 KB/pág con JBIG2** (−45 % en el interior, −41 % en el total).
 
-3. **¿Estás en modo gris?** `-G` pesa ~7× más que 1 bit. Quítalo, o baja la
+   ```bash
+   yay -S jbig2enc          # AUR
+   ```
+
+   Necesita además `pngquant`, porque activa `--optimize 3`. Si falta alguno de
+   los dos, el script baja a `--optimize 1` y te lo dice.
+
+3. **¿El original YA venía en JBIG2?** Míralo en la columna `enc`:
+
+   ```bash
+   pdfimages -list original.pdf | head -4
+   ```
+
+   Si dice `jbig2` con un tamaño por página minúsculo (cientos de bytes), ese
+   PDF ya está comprimido con un diccionario de símbolos compartido entre
+   páginas, que es prácticamente lo mejor que existe para texto en 1 bit.
+   **Volver a procesarlo no puede igualar eso**: al rasterizar y re-binarizar,
+   cada instancia de cada letra queda con píxeles ligeramente distintos, el
+   diccionario de símbolos crece y el resultado pesa varias veces más — pasar
+   por el script es, en compresión, un viaje de ida.
+
+   Para estos PDFs el script no tiene nada que aportar salvo que necesites
+   OCR o uniformar el tamaño de página. (`--jbig2-lossy` de ocrmypdf **no**
+   ayuda aquí: lo medimos y no cambió nada.)
+
+4. **¿Estás en modo gris?** `-G` pesa ~7× más que 1 bit. Quítalo, o baja la
    calidad con `-q`.
 
-4. **La capa de OCR ocupa.** En un libro de 14 páginas medimos ~50 KB. Con `-N`
+5. **La capa de OCR ocupa.** En un libro de 14 páginas medimos ~50 KB. Con `-N`
    te la ahorras, pero pierdes el texto buscable.
 
 Desde v5 el script **compara los tamaños al terminar** y te avisa si la salida
